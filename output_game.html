@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RC Pro-Am Racer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        /* Custom CSS for the Game Canvas and UI */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1f2937; /* Dark background */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+        #game-container {
+            border: 8px solid #4b5563;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
+            border-radius: 12px;
+            overflow: hidden;
+            background-color: #374151; /* Main panel background */
+            transition: transform 0.05s ease-out; /* For screen shake */
+            position: relative; /* CRITICAL: Needed for absolute positioning of status/modal */
+        }
+        canvas {
+            display: block;
+            background-color: #2b3543;
+        }
+        /* New UI Style: Status Panel (RESTORED) */
+        #game-status {
+            position: absolute;
+            top: 0.5rem;
+            left: 0.5rem;
+            background-color: rgba(0, 0, 0, 0.6);
+            color: #fff;
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-weight: bold;
+            line-height: 1.4;
+            z-index: 500; /* Ensure it's above the canvas */
+        }
+        .ui-panel {
+            padding: 1rem;
+            background-color: #374151;
+            color: #d1d5db;
+            border-top: 2px solid #4b5563;
+        }
+        .btn {
+            background-color: #10b981; /* Emerald green */
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            box-shadow: 0 4px #059669;
+            transition: all 0.1s;
+        }
+        .btn:active {
+            box-shadow: 0 1px #059669;
+            transform: translateY(3px);
+        }
+        /* Enhanced Message Box Style */
+        .message-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(4, 120, 87, 0.95); 
+            padding: 2rem;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+            color: white;
+            text-align: center;
+            font-size: 1.5rem;
+            z-index: 1000;
+            width: 80%;
+            max-width: 350px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        /* MODIFIED: Image sizing for better fit and non-overlapping text */
+        #modal-image {
+            width: 100%; /* Fill the container width */
+            max-width: 250px; /* Max size to prevent distortion on large screens */
+            height: auto;
+            margin-bottom: 1rem;
+            border-radius: 6px;
+            /* Remove circular padding/border if using full custom images */
+        }
+        
+        #modal-text {
+            margin-top: 0.5rem; /* Ensure text is below the image */
+        }
+        
+        .close-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: none;
+            border: none;
+            color: white;
+            font-size: 1.5rem;
+            cursor: pointer;
+            line-height: 1;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="game-status">
+            <div>Health: <span id="status-health">100</span></div>
+            <div>Time: <span id="status-time">60</span>s</div>
+            <div>Money: ₹<span id="status-money">5000</span></div>
+            <div>Checkpoints: <span id="status-checkpoints">0/3</span></div>
+        </div>
+        
+        <canvas id="gameCanvas" width="600" height="400"></canvas>
+        <div class="ui-panel flex justify-between items-center">
+            <div id="status-message" class="text-sm font-semibold">Ready to Race!</div>
+            <button id="horn-btn" class="btn">HONK (Space)</button>
+        </div>
+    </div>
+
+    <div id="message-modal" class="message-box hidden">
+        <button id="modal-close-btn" class="close-btn" onclick="closeModal()">×</button>
+        <img id="modal-image" class="modal-image" src="" alt="Game Status">
+        <p id="modal-text"></p>
+        <button id="modal-action-btn" class="btn mt-4">RESTART</button>
+    </div>
+
+    <script>
+        // --- Configuration (The "JSON" definitions) ---
+
+        // Game World Configuration
+        const trackData = {
+            // Map waypoints (0-800 X, 0-600 Y)
+            waypoints: [
+                { x: 100, y: 100 }, { x: 700, y: 100 }, { x: 700, y: 200 },
+                { x: 600, y: 200 }, { x: 600, y: 500 }, { x: 200, y: 500 },
+                { x: 200, y: 300 }, { x: 400, y: 300 }, { x: 400, y: 400 },
+                { x: 100, y: 400 }, { x: 100, y: 250 },
+            ],
+            trackWidth: 80,
+            offRoadSlowdown: 0.5,
+            potholeSlowdown: 0.6,
+        };
+        
+        const CHECKPOINT_DATA = [
+            { x: 300, y: 150 }, 
+            { x: 500, y: 350 }, 
+            { x: 250, y: 450 },
+            { x: 300, y: 150 }, 
+            { x: 500, y: 350 }, 
+            { x: 250, y: 450 }, 
+            { x: 300, y: 150 }, 
+            { x: 500, y: 350 }, 
+            { x: 250, y: 450 }, 
+            { x: 300, y: 150 }, 
+        ];
+
+        // --- GAME MECHANICS CONFIGURATION (RE-ADDED & UPDATED) ---
+        const GAME_CONFIG = {
+            initialHealth: 100,
+            initialMoney: 5000,
+            initialTimeSeconds: 60,
+            checkpointsToWin: CHECKPOINT_DATA.length, // Dynamic win condition
+            
+            // Damage Constants (NEW)
+            DITCH_DAMAGE_PER_SECOND: 10,
+            OFF_ROAD_DAMAGE_PER_SECOND: 5,
+            COLLISION_HEALTH_DAMAGE: 10, // Fixed damage for car collision
+            ENEMY_MONEY_LOSS_RANGE: { min: 100, max: 1000 },
+        };
+
+        const ENEMY_PROXIMITY_RADIUS = 50;
+        const ENEMY_NUDGE_SPEED = 5.0;
+        const MIN_COLLISION_PUSH = 10;
+        const CHECKPOINT_SIZE = 15;
+        const CHECKPOINT_COLOR = '#facc15'; // Yellow
+
+        // 2. Enemy Car Spawn Points
+        const enemySpawnData = [
+    {
+        "startWaypointIndex": 0
+    },
+    {
+        "startWaypointIndex": 0
+    },
+    {
+        "startWaypointIndex": 0
+    },
+    {
+        "startWaypointIndex": 1
+    },
+    {
+        "startWaypointIndex": 1
+    },
+    {
+        "startWaypointIndex": 1
+    },
+    {
+        "startWaypointIndex": 2
+    },
+    {
+        "startWaypointIndex": 2
+    },
+    {
+        "startWaypointIndex": 2
+    },
+    {
+        "startWaypointIndex": 3
+    },
+    {
+        "startWaypointIndex": 3
+    },
+    {
+        "startWaypointIndex": 5
+    },
+    {
+        "startWaypointIndex": 5
+    },
+    {
+        "startWaypointIndex": 6
+    },
+    {
+        "startWaypointIndex": 6
+    },
+    {
+        "startWaypointIndex": 6
+    },
+    {
+        "startWaypointIndex": 7
+    },
+    {
+        "startWaypointIndex": 7
+    },
+    {
+        "startWaypointIndex": 7
+    },
+    {
+        "startWaypointIndex": 8
+    },
+    {
+        "startWaypointIndex": 8
+    },
+    {
+        "startWaypointIndex": 9
+    },
+    {
+        "startWaypointIndex": 9
+    },
+    {
+        "startWaypointIndex": 10
+    },
+    {
+        "startWaypointIndex": 10
+    },
+    {
+        "startWaypointIndex": 10
+    }
+];
+
+        // 3. Potholes (simplified from user input for clean integration)
+        const potholesData = [
+            { x: 690, y: 150, radius: 10 },
+            { x: 720, y: 140, radius: 15 },
+            { x: 560, y: 170, radius: 10 },
+            { x: 580, y: 190, radius: 15 },
+
+            { x: 570, y: 200, radius: 10 },
+            { x: 590, y: 250, radius: 15 },
+
+            { x: 570, y: 290, radius: 13 },
+            { x: 590, y: 300, radius: 15 },
+
+            { x: 580, y: 350, radius: 11 },
+            { x: 600, y: 380, radius: 12 },
+
+            { x: 590, y: 420, radius: 12 },
+            { x: 620, y: 450, radius: 12 },
+
+            { x: 500, y: 480, radius: 16 },
+            { x: 450, y: 500, radius: 18 },
+
+            { x: 250, y: 500, radius: 12 },
+            { x: 270, y: 520, radius: 10 },
+            { x: 300, y: 300, radius: 8 },
+            { x: 520, y: 100, radius: 10 },
+            { x: 200, y: 200, radius: 12 },
+            { x: 200, y: 400, radius: 10 },
+            { x: 60, y: 150, radius: 10 },
+            { x: 250, y: 300, radius: 12 },
+            { x: 300, y: 200, radius: 8 },
+            { x: 200, y: 100, radius: 10 }, //start
+            { x: 300, y: 110, radius: 15 },
+            { x: 320, y: 90, radius: 8 },
+            { x: 400, y: 300, radius: 10 },
+            { x: 380, y: 300, radius: 12 },
+
+            { x: 80, y: 390, radius: 10 },
+            { x: 100, y: 300, radius: 10 },
+            { x: 70, y: 350, radius: 12 },
+
+
+            { x: 200, y: 300, radius: 15 },
+            { x: 400, y: 300, radius: 15 },
+            { x: 210, y: 310, radius: 15 },
+
+
+            { x: 220, y: 200, radius: 10 },
+        ];
+
+        // 4. Bridge (visual element only)
+        const bridgeData = [
+            { x: 100, y: 250, width: 100, height: 50 },
+        ];
+        
+        // MODIFIED: Use local image filenames
+        const MODAL_IMAGES = {
+            FAIL: 'out_of_time.png', 
+            WIN: 'win.png', 
+            WARNING: 'collide.png' 
+        };
+
+        // --- Game Setup ---
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusMessage = document.getElementById('status-message');
+        const hornButton = document.getElementById('horn-btn');
+        const VIEWPORT_WIDTH = canvas.width;
+        const VIEWPORT_HEIGHT = canvas.height;
+        
+        let player;
+        let enemies = [];
+        let checkpoints = []; // All Checkpoint objects
+        let keys = {};
+        let gameTime = 0;
+        let screenShake = { x: 0, y: 0, magnitude: 0, decay: 0.8 }; 
+
+        // Game State (RE-ADDED)
+        let game = {
+            health: GAME_CONFIG.initialHealth,
+            money: GAME_CONFIG.initialMoney,
+            timeLeft: GAME_CONFIG.initialTimeSeconds,
+            checkpointsCaught: 0,
+            currentCheckpointIndex: 0, // NEW: Tracks the index of the active checkpoint
+            isGameOver: false,
+            isGamePaused: false,
+            timeAccumulator: 0,
+        };
+        
+        // --- Modal Functionality (RE-ADDED & MODIFIED) ---
+        const modal = document.getElementById('message-modal');
+        const modalImage = document.getElementById('modal-image');
+        const modalText = document.getElementById('modal-text');
+        const modalActionButton = document.getElementById('modal-action-btn');
+        const modalCloseButton = document.getElementById('modal-close-btn');
+
+        function showModal(type, message, subMessage = '') {
+            modalImage.src = MODAL_IMAGES[type];
+            // MODIFIED: Use 'transparent' for custom images
+            modalImage.style.backgroundColor = 'transparent'; 
+            
+            modalText.innerHTML = `<strong>${message}</strong><br>${subMessage}`;
+            modal.classList.remove('hidden');
+
+            if (type === 'FAIL' || type === 'WIN') {
+                game.isGameOver = true;
+                modalActionButton.classList.remove('hidden');
+                modalActionButton.onclick = restartGame;
+                modalActionButton.textContent = 'RESTART RACE';
+                modalCloseButton.classList.add('hidden'); 
+                modal.style.background = type === 'FAIL' ? 'rgba(185, 28, 28, 0.95)' : 'rgba(4, 120, 87, 0.95)';
+            } else if (type === 'WARNING') {
+                // Do not pause the game on simple warning
+                modalActionButton.classList.add('hidden'); 
+                modalCloseButton.classList.remove('hidden'); 
+                modalCloseButton.onclick = closeModal;
+                modal.style.background = 'rgba(202, 138, 4, 0.95)';
+            }
+        }
+
+        window.closeModal = function() {
+            modal.classList.add('hidden');
+            if (game.isGamePaused) {
+                game.isGamePaused = false;
+            }
+        }
+
+        // --- Status UI Update (RE-ADDED) ---
+        function updateStatusUI() {
+            document.getElementById('status-health').textContent = Math.max(0, game.health).toFixed(0);
+            document.getElementById('status-time').textContent = Math.max(0, game.timeLeft).toFixed(0);
+            document.getElementById('status-money').textContent = game.money.toFixed(0);
+            document.getElementById('status-checkpoints').textContent = `${game.checkpointsCaught}/${GAME_CONFIG.checkpointsToWin}`;
+
+            document.getElementById('status-health').style.color = game.health <= 20 ? '#ef4444' : '#10b981';
+            document.getElementById('status-time').style.color = game.timeLeft <= 10 ? '#ef4444' : '#fff';
+        }
+
+        // --- Game Control (RE-ADDED) ---
+        function restartGame() {
+            game.health = GAME_CONFIG.initialHealth;
+            game.money = GAME_CONFIG.initialMoney;
+            game.timeLeft = GAME_CONFIG.initialTimeSeconds;
+            game.checkpointsCaught = 0;
+            game.currentCheckpointIndex = 0; // Reset checkpoint index
+            game.isGameOver = false;
+            game.isGamePaused = false;
+            game.timeAccumulator = 0;
+            
+            initGame(); // Re-initialize entities and checkpoints
+            closeModal();
+            updateStatusUI();
+            document.getElementById('status-message').textContent = 'Collect 3 yellow checkpoints before time runs out!';
+        }
+        
+        // --- Game Objects (Classes) ---
+        
+        class Checkpoint { // (MODIFIED FOR SEQUENTIAL VISIBILITY)
+            constructor(x, y, index) {
+                this.x = x;
+                this.y = y;
+                this.index = index;
+                this.size = CHECKPOINT_SIZE;
+                this.color = CHECKPOINT_COLOR;
+                this.isActive = false; // Start inactive by default
+            }
+
+            draw() {
+                if (!this.isActive) return;
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.beginPath();
+                ctx.arc(0, 0, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 10;
+                ctx.fill();
+                ctx.restore();
+            }
+
+            checkCollision() {
+                // Only check collision for the currently active checkpoint
+                if (!this.isActive || this.index !== game.currentCheckpointIndex || !player) return false;
+                
+                const dist = Math.sqrt(
+                    (player.x - this.x) ** 2 + (player.y - this.y) ** 2
+                );
+                
+                if (dist < player.width / 2 + this.size) {
+                    this.isActive = false;
+                    game.checkpointsCaught++;
+                    game.currentCheckpointIndex++;
+                    updateStatusUI();
+                    new Tone.Oscillator(550, "square").toDestination().start().stop("+0.05");
+                    
+                    // Activate the next checkpoint if it exists
+                    if (game.currentCheckpointIndex < checkpoints.length) {
+                        checkpoints[game.currentCheckpointIndex].isActive = true;
+                    }
+                    
+                    return true;
+                }
+                return false;
+            }
+        }
+        
+        class Car { 
+            constructor(x, y, color, isPlayer = false, trackWaypoints = null) {
+                this.x = x;
+                this.y = y;
+                this.width = 20;
+                this.height = 15;
+                this.color = color;
+                this.angle = 0;
+                this.speed = 0;
+                this.maxSpeed = isPlayer ? 4 : 3;
+                this.acceleration = isPlayer ? 0.2 : 0.05;
+                this.friction = 0.05;
+                this.turnRate = 0.05;
+                this.isPlayer = isPlayer;
+
+                this.waypoints = trackWaypoints;
+                this.currentWaypoint = 0;
+                this.nextHornTime = gameTime + Math.random() * 500 + 300;
+            }
+
+            update(deltaTime) {
+                this.speed *= (1 - this.friction * deltaTime);
+
+                if (this.isPlayer) {
+                    this.handlePlayerInput(deltaTime);
+                } else {
+                    this.handleAI(deltaTime);
+                }
+
+                let speedMultiplier = 1;
+                let onPothole = this.checkPotholeCollision();
+                let onTrack = this.checkOnTrack();
+
+                // Only apply slowdown, damage is handled in handleEnvironmentalDamage
+                if (onPothole) {
+                    speedMultiplier *= trackData.potholeSlowdown;
+                } else if (!onTrack) {
+                    speedMultiplier *= trackData.offRoadSlowdown;
+                }
+
+                this.speed *= speedMultiplier;
+
+                this.x += Math.cos(this.angle) * this.speed * deltaTime;
+                this.y += Math.sin(this.angle) * this.speed * deltaTime;
+
+                if (this.isPlayer) {
+                    const normalizedSpeed = Math.min(1, Math.abs(this.speed) / this.maxSpeed);
+                    engineNoise.volume.value = normalizedSpeed * 30 - 40; 
+                    engineFilter.frequency.value = 200 + normalizedSpeed * 800;
+                }
+            }
+
+            handlePlayerInput(deltaTime) {
+                if (keys['ArrowUp'] || keys['w']) {
+                    this.speed = Math.min(this.maxSpeed, this.speed + this.acceleration * deltaTime);
+                } else if (keys['ArrowDown'] || keys['s']) {
+                    this.speed = Math.max(-this.maxSpeed * 0.1, this.speed - this.acceleration * deltaTime);
+                }
+
+                if (Math.abs(this.speed) > 0.1) {
+                    const actualTurnRate = this.turnRate * (this.speed > 0 ? 1 : -1);
+                    if (keys['ArrowLeft'] || keys['a']) {
+                        this.angle -= actualTurnRate * deltaTime;
+                    } else if (keys['ArrowRight'] || keys['d']) {
+                        this.angle += actualTurnRate * deltaTime;
+                    }
+                }
+
+                if (keys[' '] && !this.isHornPlaying) {
+                    this.isHornPlaying = true;
+                    this.justHonked = true; 
+                    playerHorn.triggerAttackRelease("Ab4", "0.5"); 
+                    setTimeout(() => this.isHornPlaying = false, 700);
+                }
+            }
+
+            checkDistanceToPlayer() {
+                if (!this.isPlayer && player) {
+                    return Math.sqrt(
+                        (player.x - this.x) ** 2 + (player.y - this.y) ** 2
+                    );
+                }
+                return Infinity;
+            }
+
+            handleAI(deltaTime) {
+                const target = this.waypoints[this.currentWaypoint];
+                const dx = target.x - this.x;
+                const dy = target.y - this.y;
+                const distanceToWaypoint = Math.sqrt(dx * dx + dy * dy);
+                const targetAngle = Math.atan2(dy, dx);
+
+                const baseMaxSpeed = 3;
+                const baseAcceleration = 0.10;
+                const recoveryMaxSpeed = 3.5;
+                const recoveryAcceleration = 0.15;
+
+                const onTrack = this.checkOnTrack();
+                const distanceToPlayer = this.checkDistanceToPlayer();
+
+                if (!onTrack) {
+                    this.maxSpeed = recoveryMaxSpeed;
+                    this.acceleration = recoveryAcceleration;
+                } else if (distanceToPlayer < ENEMY_PROXIMITY_RADIUS) {
+                    this.maxSpeed = 0.05;
+                    this.maybeHorn(true); 
+                } else {
+                    this.maxSpeed = baseMaxSpeed;
+                    this.acceleration = baseAcceleration;
+                }
+
+                let angleDiff = targetAngle - this.angle;
+                if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+                if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+
+                this.angle += Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), this.turnRate * deltaTime);
+
+                this.speed = Math.min(this.maxSpeed, this.speed + this.acceleration * deltaTime);
+
+                if (distanceToWaypoint < 30) {
+                    this.currentWaypoint = (this.currentWaypoint + 1) % this.waypoints.length;
+                }
+            }
+
+            maybeHorn(isNearPlayer = false) {
+                const honkInterval = isNearPlayer ? 50 : 500 + Math.random() * 300; 
+
+                if (gameTime > this.nextHornTime) {
+                    this.nextHornTime = gameTime + honkInterval;
+                    playerHorn.triggerAttackRelease("Ab4", "0.5");
+                }
+            }
+
+            checkPotholeCollision() {
+                for (const hole of potholesData) {
+                    const dx = hole.x - this.x;
+                    const dy = hole.y - this.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    if (distance < hole.radius + this.width / 2) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            checkOnTrack() {
+                const waypoints = trackData.waypoints;
+                const trackWidth = trackData.trackWidth;
+                let minDistance = Infinity;
+
+                for (let i = 0; i < waypoints.length; i++) {
+                    const p1 = waypoints[i];
+                    const p2 = waypoints[(i + 1) % waypoints.length];
+
+                    const l2 = (p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2;
+                    if (l2 === 0) continue; 
+
+                    const t = ((this.x - p1.x) * (p2.x - p1.x) + (this.y - p1.y) * (p2.y - p1.y)) / l2;
+                    const projection = Math.max(0, Math.min(1, t));
+
+                    const closestX = p1.x + projection * (p2.x - p1.x);
+                    const closestY = p1.y + projection * (p2.y - p1.y);
+
+                    const dx = this.x - closestX;
+                    const dy = this.y - closestY;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    minDistance = Math.min(minDistance, distance);
+                }
+
+                return minDistance < (trackWidth / 2) + (this.width / 2);
+            }
+
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+
+                let carColor = this.color;
+                if (checkCarBridgeOverlap(this)) {
+                    if (this.isPlayer) {
+                        carColor = '#f9a8a8';
+                    } else {
+                        carColor = '#ffeb3b';
+                    }
+                }
+
+                ctx.fillStyle = carColor;
+                ctx.fillRect(-this.width / 2, -this.height / 2, this.width, this.height);
+
+                ctx.fillStyle = '#6b7280';
+                ctx.fillRect(this.width / 4, -this.height / 3, this.width / 4, this.height * 2 / 3);
+
+                if (!this.isPlayer) {
+                    ctx.fillStyle = 'yellow';
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.restore();
+            }
+        }
+        // --- End Car class ---
+
+        // --- Tone.js Sound Setup ---
+        const engineNoise = new Tone.Noise("brown").toDestination();
+        const engineFilter = new Tone.Filter(200, "lowpass").toDestination();
+        engineNoise.connect(engineFilter);
+        engineNoise.volume.value = -30;
+        engineNoise.start();
+
+        const playerHorn = new Tone.PolySynth(Tone.FMSynth, {
+            oscillator: { type: "pulse", width: 0.3 }, 
+            envelope: { attack: 0.01, decay: 0.3, sustain: 0.1, release: 0.2 },
+            modulation: { type: "square" },
+            modulationIndex: 10,
+        }).toDestination();
+        const thumpSynth = new Tone.MembraneSynth().toDestination();
+
+        function startAudio() {
+            if (Tone.context.state !== 'running') {
+                Tone.start();
+            }
+        }
+
+        // --- Drawing and Helper Functions ---
+
+        function drawTrack() { 
+            const waypoints = trackData.waypoints;
+            const trackWidth = trackData.trackWidth;
+
+            ctx.lineWidth = trackWidth;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            ctx.strokeStyle = '#6b7280';
+            ctx.beginPath();
+            waypoints.forEach((p, i) => {
+                if (i === 0) ctx.moveTo(p.x, p.y);
+                else ctx.lineTo(p.x, p.y);
+            });
+            ctx.closePath();
+            ctx.stroke();
+
+            ctx.strokeStyle = '#9ca3af';
+            ctx.lineWidth = trackWidth * 0.8;
+            ctx.beginPath();
+            waypoints.forEach((p, i) => {
+                if (i === 0) ctx.moveTo(p.x, p.y);
+                else ctx.lineTo(p.x, p.y);
+            });
+            ctx.closePath();
+            ctx.stroke();
+
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([10, 10]);
+            ctx.beginPath();
+            waypoints.forEach((p, i) => {
+                if (i === 0) ctx.moveTo(p.x, p.y);
+                else ctx.lineTo(p.x, p.y);
+            });
+            ctx.closePath();
+            ctx.stroke();
+            ctx.setLineDash([]); 
+
+            const startP = waypoints[0];
+            const endP = waypoints[waypoints.length - 1];
+            ctx.strokeStyle = '#facc15';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.moveTo(startP.x, startP.y);
+            ctx.lineTo(endP.x, endP.y);
+            ctx.stroke();
+        }
+
+        function drawPotholes() { 
+            ctx.fillStyle = '#544C4A'; 
+            potholesData.forEach(hole => {
+                ctx.beginPath();
+                ctx.arc(hole.x, hole.y, hole.radius, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        function drawBridge(bridge, isOverlay) { 
+            ctx.save();
+            ctx.translate(bridge.x, bridge.y);
+
+            ctx.fillStyle = '#4b5563';
+            ctx.fillRect(-bridge.width / 2, -bridge.height / 2, bridge.width, bridge.height);
+
+            if (isOverlay) {
+                ctx.fillStyle = 'rgba(156, 163, 175, 0.4)';
+                ctx.fillRect(-bridge.width / 2, -bridge.height / 2, bridge.width, bridge.height);
+
+                ctx.strokeStyle = '#d1d5db';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.rect(-bridge.width / 2, -bridge.height / 2, bridge.width, bridge.height);
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+
+        function checkCarBridgeOverlap(car) { 
+            for (const bridge of bridgeData) {
+                if (
+                    car.x + car.width / 2 > bridge.x - bridge.width / 2 &&
+                    car.x - car.width / 2 < bridge.x + bridge.width / 2 &&
+                    car.y + car.height / 2 > bridge.y - bridge.height / 2 &&
+                    car.y - car.height / 2 < bridge.y + bridge.height / 2
+                ) {
+                    return bridge;
+                }
+            }
+            return null;
+        }
+
+        function applyScreenShake(magnitude) { 
+            screenShake.magnitude = Math.max(screenShake.magnitude, magnitude);
+        }
+
+        function updateScreenShake(deltaTime) { 
+            if (screenShake.magnitude > 0.1) {
+                screenShake.x = (Math.random() - 0.5) * screenShake.magnitude * 2;
+                screenShake.y = (Math.random() - 0.5) * screenShake.magnitude * 2;
+                screenShake.magnitude *= screenShake.decay;
+            } else {
+                screenShake.x = 0;
+                screenShake.y = 0;
+                screenShake.magnitude = 0;
+            }
+
+            const container = document.getElementById('game-container');
+            container.style.transform = `translate(${screenShake.x}px, ${screenShake.y}px)`;
+        }
+
+        // --- Damage/Collision Handlers (RE-ADDED & UPDATED) ---
+        
+        // NEW: Handles damage from potholes and off-road driving
+        function handleEnvironmentalDamage(deltaTime) {
+            const timeDeltaSeconds = deltaTime * (1000 / FPS) / 1000;
+            let damage = 0;
+            let message = 'Ready to Race!';
+
+            const onPothole = player.checkPotholeCollision();
+            const onTrack = player.checkOnTrack();
+            
+            if (onPothole) {
+                damage = GAME_CONFIG.DITCH_DAMAGE_PER_SECOND * timeDeltaSeconds;
+                message = `WARNING: Pothole Hit! Health -${damage.toFixed(1)}`;
+                applyScreenShake(1.5); 
+                thumpSynth.triggerAttackRelease("C1", "16n");
+            } else if (!onTrack) {
+                damage = GAME_CONFIG.OFF_ROAD_DAMAGE_PER_SECOND * timeDeltaSeconds;
+                message = `OFF-ROAD: Ditch Damage! Health -${damage.toFixed(1)}`;
+                applyScreenShake(1); 
+                thumpSynth.triggerAttackRelease("D1", "8n");
+            }
+            
+            if (damage > 0) {
+                game.health -= damage;
+                document.getElementById('status-message').textContent = message;
+                updateStatusUI();
+                if (game.health <= 0) checkGameOverConditions();
+            }
+        }
+
+
+        function handleEnemyHit(carA, carB) {
+            // carA is always player
+            const moneyLost = Math.floor(Math.random() * (GAME_CONFIG.ENEMY_MONEY_LOSS_RANGE.max - GAME_CONFIG.ENEMY_MONEY_LOSS_RANGE.min + 1)) + GAME_CONFIG.ENEMY_MONEY_LOSS_RANGE.min;
+            game.money = Math.max(0, game.money - moneyLost);
+            
+            // Health loss added for collision damage
+            game.health = Math.max(0, game.health - GAME_CONFIG.COLLISION_HEALTH_DAMAGE);
+            updateStatusUI();
+            
+            if (game.health <= 0) {
+                checkGameOverConditions();
+            } else {
+                // Only show warning if not game over
+                showModal('WARNING', 'VEHICLE DAMAGE ALERT!', `You hit an enemy car! Health -${GAME_CONFIG.COLLISION_HEALTH_DAMAGE.toFixed(0)} and lost ₹${moneyLost}.`);
+            }
+            applyScreenShake(5);
+        }
+
+        function checkWinConditions() {
+            if (game.checkpointsCaught >= GAME_CONFIG.checkpointsToWin) {
+                showModal('WIN', 'RACE COMPLETE!', `Time Remaining: ${game.timeLeft.toFixed(0)}s`);
+                return true;
+            }
+            return false;
+        }
+        
+        function checkGameOverConditions() {
+            if (game.isGameOver) return true;
+
+            let message = '';
+            let conditionMet = false;
+
+            if (game.health <= 0) {
+                message = 'Your health reached zero!';
+                conditionMet = true;
+            } else if (game.timeLeft <= 0) {
+                message = `Time has run out! You only collected ${game.checkpointsCaught}/${GAME_CONFIG.checkpointsToWin} checkpoints.`;
+                conditionMet = true;
+            }
+            
+            if (conditionMet) {
+                showModal('FAIL', 'RACE FAILED!', message);
+                return true;
+            }
+            return false;
+        }
+
+        function checkCarCollisions() {
+            const allCars = [player, ...enemies];
+            
+            for (let i = 0; i < allCars.length; i++) {
+                for (let j = i + 1; j < allCars.length; j++) {
+                    const carA = allCars[i];
+                    const carB = allCars[j];
+
+                    const carARadius = carA.width / 2;
+                    const carBRadius = carB.width / 2;
+                    const minDistance = carARadius + carBRadius;
+
+                    const dx = carA.x - carB.x;
+                    const dy = carA.y - carB.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance < minDistance) {
+                        // Collision detected!
+                        
+                        // Check if player is involved and trigger damage/money loss
+                        if (carA.isPlayer) {
+                            handleEnemyHit(carA, carB);
+                        } else if (carB.isPlayer) {
+                            handleEnemyHit(carB, carA);
+                        }
+
+                        // Collision resolution
+                        const angle = Math.atan2(dy, dx);
+                        const overlap = minDistance - distance;
+                        const pushDistance = Math.max(overlap, MIN_COLLISION_PUSH);
+                        
+                        const pushX = Math.cos(angle) * (pushDistance / 2);
+                        const pushY = Math.sin(angle) * (pushDistance / 2);
+
+                        carA.x += pushX;
+                        carA.y += pushY;
+                        carB.x -= pushX;
+                        carB.y -= pushY;
+
+                        carA.speed *= 0.8;
+                        carB.speed *= 0.8;
+
+                        if (!carA.isPlayer) carA.maybeHorn();
+                        if (!carB.isPlayer) carB.maybeHorn();
+                        
+                        if (carA.isPlayer || carB.isPlayer) {
+                            applyScreenShake(2);
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Game Update Logic ---
+
+        function updateGame(deltaTime) {
+            // Check global game state first
+            if (game.isGameOver || game.isGamePaused) {
+                return;
+            }
+
+            // --- Time Update ---
+            game.timeAccumulator += deltaTime * fixedTimeStep;
+            if (game.timeAccumulator >= 1000) {
+                game.timeLeft--;
+                game.timeAccumulator -= 1000;
+                updateStatusUI();
+            }
+
+            // 1. Check Win/Lose Conditions
+            if (checkWinConditions() || checkGameOverConditions()) {
+                return;
+            }
+
+            // 2. Update Player/Entities and Damage
+            player.update(deltaTime);
+            handleEnvironmentalDamage(deltaTime); // Check and apply pothole/off-road damage
+            enemies.forEach(enemy => enemy.update(deltaTime));
+
+            // 3. Check Collisions (Player-Enemy & Enemy-Enemy)
+            checkCarCollisions();
+
+            // 4. Check Checkpoint Collisions
+            checkpoints.forEach(checkpoint => checkpoint.checkCollision());
+            
+            // 5. Other updates
+            updateScreenShake(deltaTime);
+            gameTime++;
+        }
+        
+        // --- Rendering ---
+
+        function renderGame() {
+            const camX = player.x - VIEWPORT_WIDTH / 2;
+            const camY = player.y - VIEWPORT_HEIGHT / 2;
+
+            ctx.clearRect(0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT); 
+
+            // Draw Ground (Green)
+            ctx.fillStyle = '#10b981';
+            ctx.fillRect(0, 0, 800, 600); // Draw the whole map area
+            
+            ctx.save();
+            ctx.translate(-camX, -camY);
+
+            drawTrack();
+            drawPotholes();
+            checkpoints.forEach(cp => cp.draw()); // Draw checkpoints
+
+            bridgeData.forEach(bridge => drawBridge(bridge, false));
+
+            // Draw Cars
+            player.draw();
+            enemies.forEach(enemy => enemy.draw());
+
+            bridgeData.forEach(bridge => drawBridge(bridge, true));
+
+            ctx.restore();
+        }
+
+        // --- Initialization ---
+
+        function initGame() {
+            // Initialize Player Car (at the fourth waypoint which is { x: 600, y: 500 } )
+            const startPoint = trackData.waypoints[4];
+            player = new Car(startPoint.x, startPoint.y, '#ef4444', true);
+            
+            // Initialize Enemy Cars 
+            enemies = enemySpawnData.map(spawn => {
+                const spawnPoint = trackData.waypoints[spawn.startWaypointIndex];
+                const color = `#${Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')}`;
+                return new Car(spawnPoint.x, spawnPoint.y, color, false, trackData.waypoints);
+            });
+            
+            // Initialize ALL checkpoints, but only activate the first one
+            checkpoints = CHECKPOINT_DATA.map((p, index) => new Checkpoint(p.x, p.y, index));
+            if (checkpoints.length > 0) {
+                checkpoints[0].isActive = true;
+            }
+
+            // Add event listeners (RE-ADDED)
+            window.addEventListener('keydown', (e) => {
+                if ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'].includes(e.key)) {
+                    e.preventDefault();
+                }
+                keys[e.key] = true;
+                startAudio();
+            });
+            window.addEventListener('keyup', (e) => {
+                keys[e.key] = false;
+            });
+            hornButton.addEventListener('click', () => {
+                if (!player.isHornPlaying) {
+                     keys[' '] = true;
+                     setTimeout(() => keys[' '] = false, 100); 
+                }
+            });
+            
+            updateStatusUI(); // Initial status display
+        }
+
+        // --- Game Loop ---
+        let lastTime = 0;
+        const FPS = 60;
+        const fixedTimeStep = 1000 / FPS;
+
+        function gameLoop(timestamp) {
+            if (!lastTime) lastTime = timestamp;
+            const deltaTime = (timestamp - lastTime) / fixedTimeStep;
+            lastTime = timestamp;
+
+            updateGame(deltaTime);
+            renderGame();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        window.onload = function () {
+            initGame();
+            requestAnimationFrame(gameLoop);
+            document.getElementById('status-message').textContent = 'Collect 3 yellow checkpoints before time runs out!';
+        };
+        
+        function showMessage(text, title) {
+            // Re-adding a non-modal showMessage for non-critical messages
+            document.getElementById('status-message').textContent = `${title}: ${text}`;
+        }
+        
+    </script>
+</body>
+</html>
